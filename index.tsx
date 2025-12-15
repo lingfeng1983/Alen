@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { GoogleGenAI } from "@google/genai";
 import { parse } from "marked";
@@ -219,11 +219,15 @@ header p {
 .input-wrapper {
   position: relative;
   border-radius: 24px;
-  padding: 4px;
+  /* padding removed to allow header to be flush */
+  padding: 0;
   background: var(--glass-bg);
   border: var(--glass-border);
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   transition: all 0.3s ease;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .input-wrapper:focus-within {
@@ -231,10 +235,41 @@ header p {
   box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2);
 }
 
+.input-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.toolbar-group {
+  display: flex;
+  gap: 4px;
+}
+
+.toolbar-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toolbar-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
 .preview-toggle {
-  position: absolute;
-  top: 12px;
-  right: 12px;
+  /* Reset previous styles */
+  position: static;
   background: rgba(0, 0, 0, 0.4);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--text-secondary);
@@ -242,7 +277,6 @@ header p {
   border-radius: 6px;
   font-size: 0.75rem;
   cursor: pointer;
-  z-index: 10;
   transition: all 0.2s;
   display: flex;
   align-items: center;
@@ -261,13 +295,14 @@ textarea {
   border: none;
   color: white;
   padding: 20px;
-  padding-right: 80px; /* Prevent text going under button */
+  /* removed padding-right: 80px */
   font-size: 1.1rem;
   font-family: inherit;
   resize: none;
   min-height: 120px;
   outline: none;
   box-sizing: border-box;
+  flex-grow: 1;
 }
 
 textarea::placeholder {
@@ -837,7 +872,7 @@ const SkeletonCard = () => (
   </div>
 );
 
-const DopaCard = ({ data, onSave, onDelete, onUpdate, onOptimize, onAiRefine, existingTypes = [], isSaved, isOptimizing }: DopaCardProps) => {
+const DopaCard: React.FC<DopaCardProps> = ({ data, onSave, onDelete, onUpdate, onOptimize, onAiRefine, existingTypes = [], isSaved, isOptimizing }) => {
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState(data);
@@ -1059,6 +1094,7 @@ const App = () => {
   const [loading, setLoading] = useState(false);
   const [optimizingId, setOptimizingId] = useState<string | null>(null);
   const [generatedPrompts, setGeneratedPrompts] = useState<PromptData[]>([]);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   
   // Library State
   const [savedPrompts, setSavedPrompts] = useState<PromptData[]>(() => {
@@ -1100,6 +1136,52 @@ const App = () => {
   const updateGeneratedPrompt = (updatedPrompt: PromptData) => {
     setGeneratedPrompts(prev => prev.map(p => p.id === updatedPrompt.id ? updatedPrompt : p));
   };
+
+  // Markdown Formatting Logic
+  const handleFormat = (type: 'bold' | 'italic' | 'list' | 'code') => {
+    if (!textareaRef.current) return;
+    const textarea = textareaRef.current;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = textarea.value;
+    const selection = text.substring(start, end);
+
+    let newText = text;
+    let newCursorPos = end;
+
+    switch (type) {
+      case 'bold':
+        newText = text.substring(0, start) + `**${selection}**` + text.substring(end);
+        newCursorPos = start === end ? start + 2 : end + 4;
+        break;
+      case 'italic':
+        newText = text.substring(0, start) + `*${selection}*` + text.substring(end);
+        newCursorPos = start === end ? start + 1 : end + 2;
+        break;
+      case 'list':
+        // Simple list insertion
+        const before = text.substring(0, start);
+        const lineStart = before.lastIndexOf('\n') + 1;
+        const isStartOfLine = start === lineStart;
+        const prefix = isStartOfLine ? "- " : "\n- ";
+        newText = text.substring(0, start) + prefix + selection + text.substring(end);
+        newCursorPos = start + prefix.length + selection.length;
+        break;
+      case 'code':
+         newText = text.substring(0, start) + `\`${selection}\`` + text.substring(end);
+         newCursorPos = start === end ? start + 1 : end + 2;
+         break;
+    }
+
+    setInputText(newText);
+    
+    // Defer focusing back to textarea to allow react re-render
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(newCursorPos, newCursorPos);
+    }, 0);
+  };
+
 
   // AI Refine Function
   const refinePromptWithAi = async (data: PromptData, instruction: string): Promise<PromptData> => {
@@ -1281,29 +1363,61 @@ const App = () => {
           <>
             <div className="input-section">
               <div className="input-wrapper">
-                <button 
-                  className="preview-toggle" 
-                  onClick={() => setShowPreview(!showPreview)}
-                  title={showPreview ? "切换回编辑模式" : "预览 Markdown"}
-                >
-                   {showPreview ? (
-                    <>
-                      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                      </svg>
-                      编辑
-                    </>
-                   ) : (
-                    <>
-                      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
-                      预览
-                    </>
-                   )}
-                </button>
-                
+                <div className="input-header">
+                  <div className="toolbar-group">
+                     {!showPreview && (
+                        <>
+                          <button className="toolbar-btn" onClick={() => handleFormat('bold')} title="加粗">
+                            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 4h8a4 4 0 014 4 4 4 0 01-4 4H6V4zm0 8h9a4 4 0 014 4 4 4 0 01-4 4H6v-8z" />
+                            </svg>
+                          </button>
+                          <button className="toolbar-btn" onClick={() => handleFormat('italic')} title="斜体">
+                            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /> {/* Generic styling icon, using code icon actually. Let's use simple italic I */}
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M16 4h-6.5a2.5 2.5 0 0 0 0 5h.5a2.5 2.5 0 0 1 0 5h-1" opacity="0" /> 
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19h4m-2-14v14" />
+                            </svg>
+                          </button>
+                          <button className="toolbar-btn" onClick={() => handleFormat('list')} title="列表">
+                            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                            </svg>
+                          </button>
+                          <button className="toolbar-btn" onClick={() => handleFormat('code')} title="代码块">
+                            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                            </svg>
+                          </button>
+                        </>
+                     )}
+                     {showPreview && <span style={{fontSize: '0.85rem', color: '#94a3b8', marginLeft: '4px'}}>预览模式</span>}
+                  </div>
+                  
+                  <button 
+                    className="preview-toggle" 
+                    onClick={() => setShowPreview(!showPreview)}
+                    title={showPreview ? "切换回编辑模式" : "预览 Markdown"}
+                  >
+                     {showPreview ? (
+                      <>
+                        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                        编辑
+                      </>
+                     ) : (
+                      <>
+                        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                        预览
+                      </>
+                     )}
+                  </button>
+                </div>
+
                 {showPreview ? (
                   <div 
                     className="markdown-preview"
@@ -1311,6 +1425,7 @@ const App = () => {
                   />
                 ) : (
                   <textarea 
+                    ref={textareaRef}
                     placeholder="描述您的提示词想法（支持 Markdown 格式）..."
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
@@ -1323,7 +1438,7 @@ const App = () => {
                 )}
               </div>
 
-              <div className="input-wrapper">
+              <div className="input-wrapper" style={{padding: '4px'}}>
                 <input 
                   type="text" 
                   className="text-input"
